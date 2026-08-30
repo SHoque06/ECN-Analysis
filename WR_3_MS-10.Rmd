@@ -1,0 +1,172 @@
+---
+title: "ST117 Individual DRAFT Written Report - Phase 2 Task 3 (Woodland vegetation - Butterflies and Moths)"
+author: "Report Pod MS-10"
+date: "2026-05-09" 
+output: pdf_document
+geometry: top=1cm, bottom=1cm
+---
+
+
+```{r setup, include=FALSE}
+#Code to setup packages should go here, for example
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(ggplot2)
+library(lubridate)
+library(viridis)
+library(hrbrthemes)
+library(RColorBrewer)
+```
+
+
+# a)
+
+```{r a}
+# Initialising
+MothsDF <- read.csv("Invertebrates/ECN_IM1.csv")
+ButterflyDF <- read.csv("Invertebrates/ECN_IB1.csv")
+WoodlandDF <- read.csv("Vegetation/ECN_VW1.csv")
+
+# First we'll add a year column
+MothsDF$SYEAR <- year(dmy(MothsDF$SDATE))
+ButterflyDF$SMONTH <- month(dmy(ButterflyDF$SDATE))
+ButterflyDF$SYEAR <- year(dmy(ButterflyDF$SDATE))
+# WoodlandDF already has SYEAR 
+
+
+# Now removing 0 values and NAs
+MothsDF <- filter(MothsDF, VALUE >0 & !is.na(VALUE))
+ButterflyDF <- filter(ButterflyDF, VALUE > 0 & !is.na(VALUE))
+WoodlandDF <- filter(WoodlandDF, !is.na(TREE_SPEC))
+
+# Filtering out March and October entries as these shouldn't have been recorded
+# See phase 1
+ButterflyDF <- filter(ButterflyDF, SMONTH >= 4 & SMONTH <= 9)
+
+
+# Aggregating data to get totals for each year and site
+butterflyTotal <- aggregate(VALUE ~ SITECODE + SYEAR, data=ButterflyDF, FUN=sum)
+mothTotal <- aggregate(VALUE ~ SITECODE + SYEAR, data=MothsDF, FUN=sum)
+woodlandTotal <- aggregate(TREE_SPEC ~ SITECODE + SYEAR, data=WoodlandDF, FUN=function(x) length(unique(x)))
+
+
+
+# Left joining the butterfly onto moth one
+invCombined <- butterflyTotal |> left_join(mothTotal, by=c("SITECODE", "SYEAR"))
+
+# Now adding woodland data to the above
+part3aDF <- invCombined |> left_join(woodlandTotal, by=c("SITECODE", "SYEAR"))
+
+
+# Renaming columns for readability
+colnames(part3aDF) <- c("SITECODE", "SYEAR", "ButterflyTotal", "MothTotal", "WoodlandTotalSpecies")
+
+head(part3aDF, 3)
+
+# Repeat for moths
+part3aMothDF <- mothTotal |> left_join(woodlandTotal, by=c("SITECODE", "SYEAR"))
+colnames(part3aMothDF) <- c("SITECODE", "SYEAR", "MothTotal", "WoodlandTotalSpecies")
+
+head(part3aMothDF, 3)
+```
+
+I didn't expect there to be so many NA values under WoodlandTotalSpecies. Out of 227 annual records for the insects, only 18 of these match with the available woodland data. I suppose this makes sense given how the woodland data was attained. The same pattern holds for moths.
+  
+
+# b)
+
+```{r b}
+# For the plot, I don't need to bother with the na values
+part3bPlotData <- filter(part3aDF, !is.na(WoodlandTotalSpecies))
+part3bPlotData$SITECODE <- as.factor(part3bPlotData$SITECODE)
+
+ggplot(part3bPlotData, aes(x=WoodlandTotalSpecies, y=ButterflyTotal, color=SITECODE)) +
+  geom_point() + geom_text(aes(label=SYEAR), vjust=-0.8, size=3) +     theme_minimal() +
+  labs(title="Butterfly Abundance vs Woodland Diversity",
+       x="Number of Unique Tree Species", 
+       y="Annual Butterfly Count") + ylim(0,2500)
+
+ggplot(part3bPlotData, aes(x=WoodlandTotalSpecies, y=MothTotal, color=SITECODE)) +
+  geom_point() + theme_minimal() +
+  geom_text(aes(label=SYEAR), vjust=-0.8, size=3) +
+  labs(title="Moth Abundance vs Woodland Diversity",
+       x="Number of Unique Tree Species", 
+       y="Annual Moth Count") + ylim(0,6500)
+
+
+```
+
+Neither scatterplot shows a clear linear relationship between woodland species diversity and invertebrate counts. The data points cluster by site, suggesting the differing sites are causing most of the variation. Sites 5 and 6 in 1994 stand out as outliers in both plots, sitting far from the main cluster.
+  
+  
+
+# c)
+The first potential issue for fitting a linear regression model is the very small sample size. Although there were 227 annual insect records originally, only 18 remained after matching with woodland vegetation data. This makes it difficult to draw reliable conclusions.
+
+Secondly, the scatterplots show some clustering dependent on sites. Different sites appear to follow different patterns, violating the assumption that a single linear relationship explains all observations. There are also some clear outliers, particularly sites 5 and 6 in 1994, which would heavily influence the fitted regression line.  
+  
+
+```{r c}
+
+```
+
+# d)
+
+
+```{r d}
+# Built in linear regression function
+model_inv <- lm(MothTotal ~ ButterflyTotal, data=part3aDF)
+
+# Summary table for pooled model
+kable(data.frame(Term = c("Intercept", "ButterflyTotal"),
+  Estimate = round(summary(model_inv)$coefficients[, 1], 3),
+  Std.Error = round(summary(model_inv)$coefficients[, 2], 3),
+  p.value = round(summary(model_inv)$coefficients[, 4], 3)), caption = "Pooled Model Coefficients: MothTotal ~ ButterflyTotal", row.names = FALSE)
+
+
+
+
+ggplot(part3aDF, aes(x = ButterflyTotal, y = MothTotal)) +
+  geom_point(size=2) + 
+  geom_smooth(method="lm", color="red") + 
+  theme_minimal() +
+  labs(title = "Pooled Model: Butterfly vs Moth Counts",
+       x = "Annual Butterfly Count (Predictor)",
+       y = "Annual Moth Count (Dependent)")
+
+par(mfrow=c(2,2))
+plot(model_inv)
+
+# Remove point 114 and refit
+part3aDF_clean <- part3aDF[-114, ]
+model_inv_clean <- lm(MothTotal ~ ButterflyTotal, data=part3aDF_clean)
+
+kable(data.frame(
+  Term = c("Intercept", "ButterflyTotal"),
+  Estimate = round(coef(model_inv_clean), 3),
+  Std.Error = round(summary(model_inv_clean)$coefficients[,2], 3),
+  p.value = round(summary(model_inv_clean)$coefficients[,4], 3)
+), caption = "Refitted Model Coefficients (outlier removed): MothTotal ~ ButterflyTotal", row.names=FALSE)
+
+ggplot(part3aDF_clean, aes(x = ButterflyTotal, y = MothTotal)) +
+  geom_point(size=2) + 
+  geom_smooth(method="lm", color="red") + 
+  theme_minimal() +
+  labs(title = "Final Model: Butterfly vs Moth Counts (outlier removed)",
+       x = "Annual Butterfly Count (Predictor)",
+       y = "Annual Moth Count (Dependent)")
+
+par(mfrow=c(2,2))
+plot(model_inv_clean)
+```
+
+For the model fitting process, I used the built in function lm() to fit a linear regression model with MothTotal as the dependent variable and ButterflyTotal as the predictor. The parameters for the creating the line were estimated using the method of least squares, which seeks to minimise the distance from points to line. The R^2 value is very low at 0.0008673, suggesting that the model explains almost none of the variance in moth counts. The p-value is also high at 0.6721, indicating that butterfly counts are not a significant predictor of moths in this dataset.
+
+I then check the residuals (the difference between the observed and fitted values). First, observe the residuals vs fitted plot. The red line here is fairly straight, which may slightly support the assumption of a linear relationship.   
+Next, observe the Q-Q plot. There is some extreme deviation from the line at the right tail. Interestingly, the same points which are outliers in this plot are also outliers in the other plots. This could indicate that the residuals are not normally distributed, thanks to some extreme outliers in the moth population.    Next, observe the Scale-Location plot. Our lecture notes claim that residuals should ideally be spread equally along the range. Clearly, we see a much larger spread on the left, suggesting that the variance is not constant.  
+Finally, observe the Residuals vs Leverage plot. This lays bare the culprits which have overly impacted the regression line. In particular, see point 114, which appears to be the biggest outlier across all plots. 
+
+Perhaps one of the most immediate improvements could be removing outliers, such as the aforementioned point 114. It has high leverage, meaning that it has had a great impact on the final line. Or, looking back at the plot in task 3b, we do see that certain sites tend to cluster together significantly. Perhaps we could separate the data points according to their sites to see if different sites follow different regression lines. 
+
+I refit the model after removing point 114. The R² remains very low and the relationship remains insignificant, confirming that the poor fit is not just down to this one outlier. In conclusion, butterfly counts do not appear to be a useful predictor of moth counts in this dataset.

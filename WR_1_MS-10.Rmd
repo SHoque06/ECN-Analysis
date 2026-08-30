@@ -1,0 +1,241 @@
+---
+title: "ST117 Individual DRAFT Written Report - Phase 2 Task 1 (Woodland Vegetation - Tree Measurements)"
+output: pdf_document
+geometry: top=1cm, bottom=1cm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+VW <- read.csv("Vegetation/ECN_VW1.csv", stringsAsFactors = FALSE)  
+library(tidyr)
+library(broom)
+library(dplyr)
+library(ggplot2)  
+library(gridExtra) 
+library(knitr) 
+library(lubridate)  
+
+```
+
+## Part a
+
+```{r}
+vw_wide <- VW %>%
+  filter(FIELDNAME %in% c("DIAMETER", "HEIGHT", "DISTANCE", "NUM_STEMS")) %>%
+  pivot_wider(
+    id_cols = c(SITECODE, SYEAR, PLOTPID, CELLID, TREEID, STEMID, TREE_SPEC),
+    names_from = FIELDNAME,
+    values_from = VALUE,
+    values_fn = first
+  ) %>%
+  mutate(across(c(DIAMETER, HEIGHT, DISTANCE, NUM_STEMS), as.numeric))
+
+cols <- intersect(names(vw_wide), c("SITECODE", "SYEAR", "TREE_SPEC", "DIAMETER", "HEIGHT"))
+vw_wide %>%
+  select(all_of(cols)) %>% 
+  head(3) %>%
+  knitr::kable()
+```
+
+## Part b
+
+```{r}
+# Use all sites, remove NA
+lm_all <- lm(HEIGHT ~ DIAMETER, data = vw_wide)
+# Create a table of coefficients
+lm_all %>% tidy() %>% knitr::kable(caption = "Coefficients for Height ~ Diameter (all sites)")
+```
+
+Based on the positive DBH-height relationship, we fitted a simple linear regression (Height ~ Diameter). The slope (0.104) means that for a 1 cm increase in DBH, height increases by 0.104 m on average. The model is statistically significant (p<2e-16) but explains only 11% of the variance in height (R²=0.11), indicating a weak linear relationship.
+
+## Part c
+
+```{r,warning=FALSE,message=FALSE}
+## c) Site‑separated models with diagnostics and comparison
+
+vw_clean <- vw_wide %>% filter(!is.na(DIAMETER) & !is.na(HEIGHT))
+
+sites <- vw_clean %>%
+  group_by(SITECODE) %>%
+  summarise(n = n()) %>%
+  filter(n >= 10) %>%
+  pull(SITECODE)
+
+selected_sites <- sites[1:min(4, length(sites))]
+
+models <- list()
+scatter_plots <- list()
+resid_plots <- list()
+
+lm_global <- lm(HEIGHT ~ DIAMETER, data = vw_clean)
+models[["Global"]] <- lm_global
+
+p_global_scatter <- ggplot(vw_clean, aes(x = DIAMETER, y = HEIGHT)) +
+  geom_point(alpha = 0.2, size = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Global model (all sites)", x = "DBH (cm)", y = "Height (m)") +
+  theme_minimal()
+scatter_plots[["Global"]] <- p_global_scatter
+
+resid_global <- data.frame(fitted = fitted(lm_global), resid = residuals(lm_global))
+p_global_resid <- ggplot(resid_global, aes(x = fitted, y = resid)) +
+  geom_point(alpha = 0.2, size = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Global: Residuals vs Fitted", x = "Fitted values", y = "Residuals") +
+  theme_minimal()
+resid_plots[["Global"]] <- p_global_resid
+
+for (site in selected_sites) {
+  data_site <- vw_clean %>% filter(SITECODE == site)
+  lm_site <- lm(HEIGHT ~ DIAMETER, data = data_site)
+  models[[site]] <- lm_site
+  
+  p_scatter <- ggplot(data_site, aes(x = DIAMETER, y = HEIGHT)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = "lm", se = FALSE, color = "red") +
+    labs(title = paste("Site", site), x = "DBH (cm)", y = "Height (m)") +
+    theme_minimal()
+  scatter_plots[[site]] <- p_scatter
+  
+  resid_df <- data.frame(fitted = fitted(lm_site), resid = residuals(lm_site))
+  p_resid <- ggplot(resid_df, aes(x = fitted, y = resid)) +
+    geom_point(alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(title = paste("Site", site, "- Residuals"), x = "Fitted", y = "Residuals") +
+    theme_minimal()
+  resid_plots[[site]] <- p_resid
+}
+
+all_scatter <- c(list(Global = p_global_scatter), scatter_plots[selected_sites])
+all_resid <- c(list(Global = p_global_resid), resid_plots[selected_sites])
+
+grid.arrange(grobs = all_scatter, ncol = 2, nrow = ceiling(length(all_scatter)/2),
+             top = "Height vs Diameter: Global and site-specific models")
+grid.arrange(grobs = all_resid, ncol = 2, nrow = ceiling(length(all_resid)/2),
+             top = "Residual vs Fitted plots")
+
+comparison_table <- data.frame(
+  Model = names(models),
+  R_squared = sapply(models, function(m) summary(m)$r.squared),
+  Adj_R_sq = sapply(models, function(m) summary(m)$adj.r.squared),
+  RMSE = sapply(models, function(m) sigma(m)),
+  AIC = sapply(models, function(m) AIC(m)),
+  BIC = sapply(models, function(m) BIC(m)),
+  n = sapply(models, function(m) nobs(m))
+)
+kable(comparison_table, caption = "Model fit comparison", digits = 3)
+```
+
+The global model (all sites pooled) explains only 11.4% of the variance in height (R²=0.114) and has a high RMSE (8.05 m). This weak fit suggests that a single linear relationship between DBH and height does not hold across different woodland sites, likely due to site‑specific factors (species composition, age structure, management).
+
+Among the four site-specific models, T05 stands out with an excellent fit (R²=0.839, RMSE=3.42 m) despite having only 17 trees. The high R² indicates a strong linear association between DBH and height. However, the small sample size makes the estimate fragile, and the relatively narrow DBH range may inflate the apparent model fit.
+
+**T06** has a weak fit (R²=0.173, RMSE=16.0 m). The high RMSE and low R² suggest substantial unexplained variation, while the residual plot indicates heteroscedasticity and possible non-linearity. This may reflect variation in species composition, age structure, or environmental conditions within the site.
+
+**T08** shows a moderate fit (R²=0.3955, RMSE=5.06 m). The relationship is significant but still leaves \>60% of variation unexplained. The moderate RMSE suggests that linear regression can capture a general trend, but predictions will have substantial error.
+
+**T09** performs worst (R²=0.026, RMSE=8.35 m), indicating almost no linear relationship between DBH and height. The scatterplot suggests substantial variability in height across similar DBH values, implying that additional ecological or site-specific factors may influence tree height.
+
+**AIC/BIC** generally favour the better-fitting site-specific models, particularly T05. However, these criteria should be interpreted cautiously because the models are fitted to datasets with very different sample sizes, making direct comparisons across sites less meaningful.
+
+**Conclusion**: The global model masks substantial variation between woodland sites, so site-specific models provide a more informative description of the DBH–height relationship. T05 shows a strong linear trend but is limited by its small sample size, whereas T06 and T09 display weak fits and evidence of heteroscedasticity or non-linearity. Overall, the results highlight considerable spatial heterogeneity in tree allometry across ECN woodland sites.
+
+## Part d
+
+```{r}
+## d) Identify complications and propose improvements
+
+### 1. Identify one issue per site
+
+complication_table <- data.frame(
+  Site = c("T05", "T06", "T08", "T09"),
+  Issue = c(
+    "Very small sample size (n=17) - high leverage and overfitting risk",
+    "Heteroscedasticity: variance of height increases with DBH (fan shape in residuals)",
+    "Non‑linearity: height plateaus for large DBH (residual curvature)",
+    "Weak linear relationship (R^2 near 0); height varies substantially across similar DBH values"
+  ),
+  Proposed_remedy = c(
+    "Use only descriptive statistics; refrain from inference",
+    "Weighted least squares (weights = 1/DBH^2)",
+    "Polynomial regression: add quadratic term",
+    "No linear regression is sensible; use summary statistics or log transformation (still poor)"
+  )
+)
+knitr::kable(complication_table, caption = "Complications and suggested remedies per site")
+
+### 2. Improve T08 with quadratic term
+
+data_T08 <- vw_clean %>% filter(SITECODE == "T08")
+lm_T08_lin <- lm(HEIGHT ~ DIAMETER, data = data_T08)
+lm_T08_quad <- lm(HEIGHT ~ DIAMETER + I(DIAMETER^2), data = data_T08)
+
+# Compare fits
+comparison_T08 <- data.frame(
+  Model = c("Linear", "Quadratic"),
+  R_squared = c(summary(lm_T08_lin)$r.squared, summary(lm_T08_quad)$r.squared),
+  AIC = c(AIC(lm_T08_lin), AIC(lm_T08_quad)),
+  RMSE = c(sigma(lm_T08_lin), sigma(lm_T08_quad))
+)
+knitr::kable(comparison_T08, caption = "T08: Linear vs Quadratic fit", digits = 4)
+
+# Plot both fits
+p_T08 <- ggplot(data_T08, aes(x = DIAMETER, y = HEIGHT)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue", linetype = "dashed") +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), se = FALSE, color = "red") +
+  labs(title = "T08: Linear (blue dashed) vs Quadratic (red)", x = "DBH (cm)", y = "Height (m)") +
+  theme_minimal()
+print(p_T08)
+
+# Residual plot for quadratic model
+resid_T08 <- data.frame(fitted = fitted(lm_T08_quad), resid = residuals(lm_T08_quad))
+p_resid_T08 <- ggplot(resid_T08, aes(x = fitted, y = resid)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "T08 Quadratic model: Residuals vs Fitted", x = "Fitted", y = "Residuals") +
+  theme_minimal()
+print(p_resid_T08)
+
+### 3. Improve T06 with weighted least squares (WLS)
+
+data_T06 <- vw_clean %>% filter(SITECODE == "T06")
+# Ordinary LS
+lm_T06_ols <- lm(HEIGHT ~ DIAMETER, data = data_T06)
+# Weighted LS: weight = 1/DIAMETER^2 (to downweight large DBH which have higher variance)
+weights <- 1 / (data_T06$DIAMETER^2)
+lm_T06_wls <- lm(HEIGHT ~ DIAMETER, data = data_T06, weights = weights)
+
+# Compare
+comparison_T06 <- data.frame(
+  Model = c("OLS", "WLS (1/DBH^2)"),
+  R_squared = c(summary(lm_T06_ols)$r.squared, summary(lm_T06_wls)$r.squared),
+  AIC = c(AIC(lm_T06_ols), AIC(lm_T06_wls)),
+  RMSE = c(sigma(lm_T06_ols), sigma(lm_T06_wls))
+)
+knitr::kable(comparison_T06, caption = "T06: OLS vs Weighted Least Squares", digits = 4)
+
+# Scatter with two regression lines
+p_T06 <- ggplot(data_T06, aes(x = DIAMETER, y = HEIGHT)) +
+  geom_point(alpha = 0.3) +
+  geom_abline(intercept = coef(lm_T06_ols)[1], slope = coef(lm_T06_ols)[2], color = "blue", linetype = "dashed") +
+  geom_abline(intercept = coef(lm_T06_wls)[1], slope = coef(lm_T06_wls)[2], color = "red") +
+  labs(title = "T06: OLS (blue dashed) vs WLS (red)", x = "DBH (cm)", y = "Height (m)") +
+  theme_minimal()
+print(p_T06)
+
+# Residual plot for WLS
+resid_T06_wls <- data.frame(fitted = fitted(lm_T06_wls), resid = residuals(lm_T06_wls))
+p_resid_T06 <- ggplot(resid_T06_wls, aes(x = fitted, y = resid)) +
+  geom_point(alpha = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "T06 WLS: Residuals vs Fitted", x = "Fitted", y = "Residuals") +
+  theme_minimal()
+print(p_resid_T06)
+```
+
+Improved fit for T08: Adding the quadratic term increased R² from 0.395 to 0.577, reduced AIC from 5252 to 4945, and reduced RMSE from 5.06 to 4.24. The residual plot shows less curvature than the linear model, indicating that the quadratic model better captures the non-linear relationship between DBH and height for larger trees.
+
+Improved fit for T06: Weighted least squares (weights = 1/DBH²) reduced the influence of large DBH observations with higher variance. Although the weighted model produced a much lower residual standard error, the R² value remained low and the AIC increased relative to the OLS model. Nevertheless, the residual plot shows a more constant spread across fitted values, suggesting improved handling of heteroscedasticity.
+
+Sites T05 and T09: For T05, the small sample size makes any regression unstable; we only report descriptive statistics. For T09, no linear or simple quadratic model fits well; a non‑linear model (e.g., log‑log) would be required but is beyond the scope of ST117. We therefore conclude that simple linear regression is not sensible for T09.

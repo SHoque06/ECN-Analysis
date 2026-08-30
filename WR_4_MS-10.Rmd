@@ -1,0 +1,230 @@
+---
+title: "ST117 Individual DRAFT Written Report - Phase 2 Task 4 (Fine grains - Butterflies)"
+author: "Report Pod MS-10"
+date: "08-05-2026" 
+output: pdf_document
+geometry: top=1cm, bottom=1cm
+---
+
+
+```{r setup, include=FALSE}
+#Code to setup packages should go here, for example
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(ggplot2)
+library(lubridate)
+library(broom)
+library(ggfortify)
+```
+
+
+# a)
+
+```{r a}
+# Read Datasets
+fineGrain <- read.csv("Vegetation/ECN_VF1.csv")
+butterflies <- read.csv("Invertebrates/ECN_IB1.csv")
+
+# Sort Butterflies by Year
+butterflies$SDATE = as.Date(butterflies$SDATE, format = "%d-%b-%y")
+butterflies$YEAR <- year(butterflies$SDATE) 
+
+#Sum all butterfly counts per site per year across all species and transect sections
+butterfly_summary <- butterflies %>%
+  group_by(SITECODE, YEAR) %>%
+  summarise(
+    Total_Butterflies = sum(VALUE, na.rm = TRUE), 
+    .groups = "drop"
+  )
+
+# Count unique species per site per year as a measure of plant diversity
+fineGrain_summary <- fineGrain %>%
+  filter(!is.na(VALUE)) %>%          
+  group_by(SITECODE, SYEAR) %>%
+  summarise(
+    Unique_FG_Species = n_distinct(FIELDNAME),   
+    .groups = "drop"
+  ) %>%
+  rename(YEAR = SYEAR)
+
+# Constructed Overall Dataset
+combined_dataset <- butterfly_summary %>%
+  left_join(fineGrain_summary, by = c("SITECODE", "YEAR"))
+
+
+kable(head(combined_dataset, 3), caption = "First Three Rows of Combined Dataset")
+
+
+```
+\newpage
+# b)
+
+````{r b, warning=FALSE, message=FALSE}
+# Plot
+ggplot(combined_dataset, aes(x = Unique_FG_Species, y = Total_Butterflies, 
+                              color = SITECODE)) +
+  geom_point() +
+  labs(
+    title = "Fine Grain Species Richness vs Butterfly Abundance",
+    x = "Number of Unique Fine Grain Species",
+    y = "Total Butterfly Count"
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+````
+The scatter plot reveals a weak positive relationship between fine-grain species 
+richness and butterfly abundance. Sites with low species richness consistently record 
+low butterfly counts, whilst at higher richness values the butterfly counts become 
+considerably more variable, ranging from very low to extremely high. 
+Colouring points by SITECODE reveals that certain sites such as T05 and T10 
+consistently record higher butterfly counts regardless of fine grain species richness, 
+suggesting site-level differences may be a more important driver of butterfly 
+abundance than plant diversity alone.
+
+\newpage
+# c)
+
+````{r c, warning=FALSE, message=FALSE}
+
+ggplot(combined_dataset, aes(x = Unique_FG_Species, y = Total_Butterflies)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(
+    title = "Fine Grain Species Richness vs Butterfly Abundance",
+    x = "Number of Unique Fine Grain Species",
+    y = "Total Butterfly Count"
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Remove the outlier species
+
+# Finding Quartiles
+Q1 <- quantile(combined_dataset$Total_Butterflies, 0.25, na.rm = TRUE)
+Q3 <- quantile(combined_dataset$Total_Butterflies, 0.75, na.rm = TRUE)
+
+IQR_value <- IQR(combined_dataset$Total_Butterflies, na.rm = TRUE)
+
+# Bounds for Outliers
+lower_bound <- Q1 - 1.5 * IQR_value
+upper_bound <- Q3 + 1.5 * IQR_value
+
+# Removing Outliers
+data_no_outlier <- combined_dataset %>%
+  filter(
+    Total_Butterflies >= lower_bound &
+    Total_Butterflies <= upper_bound
+  )
+
+# Plot Without Outliers
+ggplot(data_no_outlier, aes(x = Unique_FG_Species, y = Total_Butterflies)) +
+  geom_point(color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(
+    title = "Relationship Without Extreme Outlier",
+    x = "Number of Unique Fine Grain Species",
+    y = "Total Butterfly Count"
+  ) +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+# Models (with and without outliers)
+model <- lm(Total_Butterflies ~ Unique_FG_Species, data = combined_dataset)
+model_no_outliers <- lm(Total_Butterflies ~ Unique_FG_Species, data = data_no_outlier)
+r_squared <- summary(model)$r.squared
+r_squared_no_outliers <- summary(model_no_outliers)$r.squared
+
+# Further Info Plots on Overall Model
+autoplot(model, which = 1:2)
+
+# Histogram - Showing skewness and presence of extreme values
+ggplot(combined_dataset, aes(x = Total_Butterflies)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 10) +
+  labs(title = "Distribution of Total Butterfly Counts",
+       x = "Total Butterfly Count", y = "Frequency") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Table showing Gradient and Intercept of the Regression lines
+table_model <- bind_rows(
+  tidy(model) %>% mutate(Model = "With Outlier"),
+  tidy(model_no_outliers) %>% mutate(Model = "Without Outlier")
+)
+
+table_model <- table_model %>%
+  mutate(term = case_when(
+    term == "(Intercept)" ~ "Intercept",
+    term == "Unique_FG_Species" ~ "Gradient",
+    TRUE ~ term
+  ))
+
+kable(table_model, digits = 3, caption = "Linear Model Coefficients With and Without Outliers")
+
+
+````
+The initial model suggests a slight negative relationship between fine-grain species 
+richness and butterfly abundance, though this is not statistically significant 
+(gradient = -40.35, p = 0.489). Interestingly, once outliers are removed the gradient 
+actually flips direction (gradient = 22.47, p = 0.535), remaining non-significant. 
+This instability in both the magnitude and direction of the gradient is concerning and 
+suggests the apparent relationship is highly sensitive to a small number of extreme 
+observations rather than reflecting a genuine underlying trend in the data.
+
+The diagnostic plots raise further concerns about the validity of the model. The Q-Q 
+plot shows that residuals deviate substantially from normality, particularly in the 
+upper tail, whilst the residuals vs fitted plot reveals clear heteroscedasticity, with 
+variance increasing at higher fitted values. The histogram of total butterfly counts 
+confirms the response variable is heavily right-skewed, which partly explains these 
+violations. Together with a low R² of `r round(r_squared, 3)`, these diagnostics suggest that simple linear 
+regression is not well-suited to this data. Butterfly abundance is likely influenced 
+by more complex ecological factors such as site-level characteristics, weather 
+conditions, or habitat quality that a single predictor model cannot adequately capture.
+
+\newpage
+# d)
+
+
+````{r d, warning=FALSE, message=FALSE, results='asis'}
+# Remove rows with missing fine-grain data before fitting site models
+data_fg <- combined_dataset %>%
+  filter(!is.na(Unique_FG_Species))
+
+sites_fg <- unique(data_fg$SITECODE)
+
+for (site in sites_fg) {
+  
+  site_data <- data_fg %>% filter(SITECODE == site)
+  
+  # Skip if not enough data
+  if (nrow(site_data) < 2) {
+    cat(paste("\nSite", site, "- not enough data, so skipping\n"))
+    next
+  }
+  
+  model_site <- lm(Total_Butterflies ~ Unique_FG_Species, data = site_data)
+  
+  # Scatter + regression line per site
+  print(
+    ggplot(site_data, aes(x = Unique_FG_Species, y = Total_Butterflies)) +
+      geom_point(color = "blue") + geom_smooth(method = "lm", color = "red", se = FALSE) +
+      labs(title = paste("Site", site, ": Fine Grain Species Richness vs Butterfly Abundance"),
+        x = "Number of Unique Fine Grain Species",
+        y = "Total Butterfly Count"
+      ) + theme_classic() + theme(plot.title = element_text(hjust = 0.5))
+  )
+  
+  # Coefficient table per site
+  print(
+    kable(tidy(model_site), digits = 3,
+          caption = paste("Linear Model Coefficients for Site", site))
+  )
+}
+````
+Site-specific models reveal little to no consistent relationship between fine-grain 
+species richness and butterfly abundance across the network. Most slopes are non-significant. Site T06 had no variation in fine-grain species richness (all observations recorded exactly one species), making the slope unidentifiable. T12 had only two observations, producing a perfect fit with undefined standard errors and no meaningful inference possible. 
+The site-specific regression lines deviate considerably from the global model in 
+several panels, confirming the global model poorly represents individual sites. 
+This is consistent with part c), where the apparent relationship appears driven by 
+outliers and heterogeneity between sites rather than a genuine network-wide trend.

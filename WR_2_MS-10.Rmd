@@ -1,0 +1,163 @@
+---
+title: "ST117 Individual DRAFT Written Report - Phase 2 Task 2 (Moths-Flight windows)"
+author: "Report Pod MS-10"
+date: "2026-5-9" 
+output: pdf_document
+geometry: top=1cm, bottom=1cm
+---
+
+
+```{r setup, include=FALSE}
+#Code to setup packages should go here, for example
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(ggplot2)
+
+parse_ecn_date <- function(x) {
+  x <- as.character(x)
+  day <- as.integer(substr(x, 1, 2))
+  mon_chr <- toupper(substr(x, 4, 6))
+  yr <- as.integer(substr(x, 8, 9))
+  yr <- ifelse(yr > 50, 1900 + yr, 2000 + yr)
+  mon_map <- c(JAN = 1, FEB = 2, MAR = 3, APR = 4,
+               MAY = 5, JUN = 6, JUL = 7, AUG = 8,
+               SEP = 9, OCT = 10, NOV = 11, DEC = 12)
+  as.Date(sprintf("%04d-%02d-%02d", yr, mon_map[mon_chr], day))
+}
+```
+
+
+# a)
+
+I converted the sampling dates into calendar weeks, kept positive moth counts, and treated `FIELDNAME` as the species code. I excluded `Q1` because it behaves like a recording/status code rather than a moth species. The first plot combines all remaining species. I then selected five abundant species so that the separate plots are not dominated by rare observations. Overall abundance is highest from late spring to autumn, but the species-level plots show clearer differences. Species 318, 469 and 574 have fairly concentrated late-season peaks, suggesting short main flight periods. Species 2178 and 393 are less simple, with more than one visible rise in weekly counts. These patterns are consistent with species having different flight periods, although site differences, weather and uneven sampling can also affect the observed totals.
+
+```{r a}
+moths <- read.csv("Invertebrates/ECN_IM1.csv")
+
+moths$VALUE <- suppressWarnings(as.numeric(moths$VALUE))
+moths$FIELDNAME <- as.character(moths$FIELDNAME)
+moths$DATE <- parse_ecn_date(moths$SDATE)
+moths$YEAR <- as.integer(format(moths$DATE, "%Y"))
+moths$WEEK <- as.integer(format(moths$DATE, "%U")) + 1
+
+moths_pos <- moths %>%
+  filter(!is.na(VALUE), VALUE > 0,
+         !is.na(WEEK), !is.na(SITECODE), !is.na(FIELDNAME),
+         FIELDNAME != "Q1")
+
+weekly_all <- moths_pos %>%
+  group_by(WEEK, SITECODE) %>%
+  summarise(total_count = sum(VALUE, na.rm = TRUE), .groups = "drop")
+
+ggplot(weekly_all, aes(x = WEEK, y = total_count, fill = SITECODE)) +
+  geom_col(position = "stack") +
+  labs(title = "Weekly moth counts, all species",
+       x = "Calendar week", y = "Total count", fill = "Site") +
+  theme_bw()
+
+species_to_plot <- c("2178", "318", "469", "574", "393")
+
+for (sp in species_to_plot) {
+  one_species <- moths_pos %>%
+    filter(FIELDNAME == sp) %>%
+    group_by(WEEK, SITECODE) %>%
+    summarise(total_count = sum(VALUE, na.rm = TRUE), .groups = "drop")
+  
+  print(
+    ggplot(one_species, aes(x = WEEK, y = total_count, fill = SITECODE)) +
+      geom_col(position = "stack") +
+      labs(title = paste("Weekly moth counts for species", sp),
+           x = "Calendar week", y = "Total count", fill = "Site") +
+      theme_bw()
+  )
+}
+```
+
+# b)
+
+For each site, species and year, I used the positive-count records to find the first and last calendar week where that species was recorded. The flight window is therefore the last week minus the first week plus one. The histogram has a strong spike at length 1. I do not think this is mainly biological. A one-week window can be produced when a species is caught only once in a site-year, or when a low-abundance species is missed in nearby weeks. Gaps in trapping, poor weather, and differences in site effort could also shorten the empirical window even if the real flight period was longer.
+
+```{r b}
+flight_windows <- moths_pos %>%
+  group_by(SITECODE, FIELDNAME, YEAR) %>%
+  summarise(first_week = min(WEEK, na.rm = TRUE),
+            last_week = max(WEEK, na.rm = TRUE),
+            flight_window = last_week - first_week + 1,
+            records = n(),
+            total_count = sum(VALUE, na.rm = TRUE),
+            .groups = "drop")
+
+moths <- moths %>%
+  left_join(flight_windows %>%
+              select(SITECODE, FIELDNAME, YEAR,
+                     first_week, last_week, flight_window),
+            by = c("SITECODE", "FIELDNAME", "YEAR"))
+
+ggplot(flight_windows, aes(x = flight_window)) +
+  geom_histogram(binwidth = 1, boundary = 0, closed = "left") +
+  labs(title = "Distribution of moth flight window lengths",
+       x = "Flight window length (weeks)", y = "Frequency") +
+  theme_bw()
+```
+
+# c)
+
+Guidance on using LaTeX is provided in Log 5. Alternatively, you may write mathematical derivations by hand and include them as an image.
+
+Let $\bar{x}$ be the sample mean and let $s^2$ be the sample variance, after removing one-week windows. For a Poisson distribution, $E(X)=\lambda$, so $\hat{\lambda}=\bar{x}$. For a Gamma distribution with shape $\alpha$ and rate $\beta$, $E(X)=\alpha/\beta$ and $Var(X)=\alpha/\beta^2$. Equating moments gives $\hat{\alpha}=\bar{x}^2/s^2$ and $\hat{\beta}=\bar{x}/s^2$. For a Negative Binomial distribution with mean $\mu$ and size $r$, $Var(X)=\mu+\mu^2/r$. Therefore $\hat{\mu}=\bar{x}$, $\hat{r}=\bar{x}^2/(s^2-\bar{x})$, and $\hat{p}=\hat{r}/(\hat{r}+\bar{x})$.
+
+```{r c}
+x <- flight_windows %>%
+  filter(!is.na(flight_window), flight_window >= 2) %>%
+  pull(flight_window)
+
+xbar <- mean(x)
+s2 <- var(x)
+
+pois_lambda <- xbar
+
+gamma_shape <- xbar^2 / s2
+gamma_rate <- xbar / s2
+
+nb_size <- ifelse(s2 > xbar, xbar^2 / (s2 - xbar), NA)
+nb_prob <- ifelse(!is.na(nb_size), nb_size / (nb_size + xbar), NA)
+
+
+ll_pois <- sum(dpois(x, lambda = pois_lambda, log = TRUE))
+ll_gamma <- sum(dgamma(x, shape = gamma_shape, rate = gamma_rate, log = TRUE))
+ll_nb <- ifelse(!is.na(nb_size),
+                sum(dnbinom(x, size = nb_size, prob = nb_prob, log = TRUE)),
+                NA)
+
+fit_table <- data.frame(
+  model = c("Poisson", "Gamma", "Negative Binomial"),
+  parameter_1 = c(pois_lambda, gamma_shape, nb_size),
+  parameter_2 = c(NA, gamma_rate, nb_prob),
+  log_likelihood = c(ll_pois, ll_gamma, ll_nb)
+)
+
+kable(fit_table, digits = 3)
+
+ks <- seq(min(x), max(x), by = 1)
+fit_lines <- data.frame(
+  flight_window = rep(ks, 3),
+  density = c(dpois(ks, lambda = pois_lambda),
+              dgamma(ks, shape = gamma_shape, rate = gamma_rate),
+              dnbinom(ks, size = nb_size, prob = nb_prob)),
+  model = rep(c("Poisson", "Gamma", "Negative Binomial"),
+              each = length(ks))
+)
+
+ggplot(data.frame(flight_window = x), aes(x = flight_window)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 binwidth = 1, boundary = 0, closed = "left") +
+  geom_line(data = fit_lines,
+            aes(x = flight_window, y = density, colour = model),
+            linewidth = 0.9) +
+  labs(title = "Fitted distributions for moth flight windows",
+       x = "Flight window length", y = "Density", colour = "Model") +
+  theme_bw()
+```
+
+The Poisson model is a useful starting point, but it is too restrictive because the flight-window data are more variable than a single-parameter Poisson distribution allows. The Negative Binomial model is better suited to overdispersed count data and keeps the response discrete. The Gamma model is more flexible for the right-skewed shape seen in the histogram, but it is a continuous model whereas the observations are whole numbers of weeks. For that reason, its log-likelihood should be treated as a rough comparison rather than a perfect like-for-like test against the count models.
